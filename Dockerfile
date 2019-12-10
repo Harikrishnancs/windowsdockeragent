@@ -1,105 +1,67 @@
-FROM mcr.microsoft.com/windows/servercore:ltsc2019
+# escape=`
+FROM microsoft/dotnet-framework:4.7.2-sdk-windowsservercore-ltsc2016
 
-# Install .NET 4.8
-RUN curl -fSLo dotnet-framework-installer.exe https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe `
-    && .\dotnet-framework-installer.exe /q 
-    && del .\dotnet-framework-installer.exe 
-    && powershell Remove-Item -Force -Recurse ${Env:TEMP}\*
+# Set up environment to collect install errors.
+COPY Install.cmd C:\TEMP\
+ADD https://aka.ms/vscollect.exe C:\TEMP\collect.exe
 
-# Apply latest patch
-RUN curl -fSLo patch.msu http://download.windowsupdate.com/c/msdownload/update/software/secu/2019/09/windows10.0-kb4514358-x64_b93fca9a74bb0e75ba9e878dd5f2fc537b92a32b.msu `
-    && mkdir patch 
-    && expand patch.msu patch -F:* 
-    && del /F /Q patch.msu 
-    && DISM /Online /Quiet /Add-Package /PackagePath:C:\patch\Windows10.0-kb4514358-x64.cab 
-    && rmdir /S /Q patch
+# Download channel for fixed install.
+ARG CHANNEL_URL=https://aka.ms/vs/15/release/channel
+ADD ${CHANNEL_URL} C:\TEMP\VisualStudio.chman
 
-# ngen .NET Fx
-ENV COMPLUS_NGenProtectedProcess_FeatureEnabled 0
-RUN \Windows\Microsoft.NET\Framework64\v4.0.30319\ngen uninstall "Microsoft.Tpm.Commands, Version=10.0.0.0, Culture=Neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=amd64" `
-    && \Windows\Microsoft.NET\Framework64\v4.0.30319\ngen update `
-    && \Windows\Microsoft.NET\Framework\v4.0.30319\ngen update
+# Download and install Build Tools for Visual Studio 2017.
+ADD https://aka.ms/vs/15/release/vs_buildtools.exe C:\TEMP\vs_buildtools.exe
+RUN C:\TEMP\Install.cmd C:\TEMP\vs_buildtools.exe --quiet --wait --norestart --nocache `
+    --channelUri C:\TEMP\VisualStudio.chman `
+    --installChannelUri C:\TEMP\VisualStudio.chman `
+    --add Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools `
+    --add Microsoft.Net.Component.3.5.DeveloperTools `
+    --add Microsoft.Net.ComponentGroup.4.6.2.DeveloperTools `
+    --add Microsoft.Net.ComponentGroup.TargetingPacks.Common `
+    --add Microsoft.VisualStudio.Component.TestTools.BuildTools `
+    --add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.WinXP `
+    --add Microsoft.VisualStudio.Workload.NodeBuildTools `
+    --add Microsoft.VisualStudio.Component.TypeScript.2.8 `
+    --add Microsoft.VisualStudio.Workload.NetCoreBuildTools `    
+    --add Microsoft.VisualStudio.Workload.WebBuildTools `
+    --add Microsoft.VisualStudio.Workload.VCTools `
+    --add Microsoft.VisualStudio.Workload.UniversalBuildTools `
+    --add Microsoft.VisualStudio.Workload.MSBuildTools `
+    --add Microsoft.VisualStudio.Workload.DataBuildTools
 
-# Set default directory to C:\Agent
-WORKDIR /agent
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
-# Set PowerShell as default shell
-SHELL [ "powershell", "-NoProfile", "-Command" ]
-RUN $ProgressPreference = 'SilentlyContinue'
+# Install WebDeploy and NuGet with Chocolatey
+RUN Install-PackageProvider -Name chocolatey -RequiredVersion 2.8.5.130 -Force; `
+    Install-Package -Name nodejs.install -RequiredVersion 11.6.0 -Force; `
+    Install-Package -Name webdeploy -RequiredVersion 3.6.0 -Force; `
+    Install-Package nuget.commandline -RequiredVersion 4.9.2 -Force; 
 
-# Install VSTS/DevOps self-hosted Agent
-ARG agentversion=2.158.0
-ENV agentversion=${agentversion}
-RUN Invoke-WebRequest -Uri "https://vstsagentpackage.azureedge.net/agent/$env:agentversion/vsts-agent-win-x64-$env:agentversion.zip" -OutFile "./vsts-agent-win-x64-$env:agentversion.zip" -UseBasicParsing ; `
-    Expand-Archive -Path "./vsts-agent-win-x64-$env:agentversion.zip" -DestinationPath . ; `
-    Remove-Item "./vsts-agent-win-x64-$env:agentversion.zip"
+# Install .NET Core SDK
+ENV DOTNET_SDK_VERSION 2.2.100
 
-# Install PS Modules in C:\Modules
-RUN New-Item -ItemType Directory -Name Modules -Path c:\ -Force | Out-Null ; `
-    Install-PackageProvider -Name NuGet -Force | Out-Null; `
-    Save-Module Az -Path c:\Modules -Confirm:$false | Out-Null; `
-    Save-Module Pester -Path c:\Modules -Confirm:$false | Out-Null; `
-    Save-Module PSScriptAnalyzer -Path c:\Modules -Confirm:$false | Out-Null
-    # Add C:\Modules to PSModulePatch environment variable
-RUN $ModulesPath = [environment]::GetEnvironmentVariable('PSModulePath', [System.EnvironmentVariableTarget]::Machine) ; `
-    $NewModulesPath = 'C:\Modules;' + $ModulesPath ; `
-    [environment]::SetEnvironmentVariable('PSModulePath', $NewModulesPath, [System.EnvironmentVariableTarget]::Machine)
+RUN Invoke-WebRequest -OutFile dotnet.zip https://dotnetcli.blob.core.windows.net/dotnet/Sdk/$Env:DOTNET_SDK_VERSION/dotnet-sdk-$Env:DOTNET_SDK_VERSION-win-x64.zip; `
+    $dotnet_sha512 = '87776c7124cd25b487b14b3d42c784ee31a424c7c8191ed55810294423f3e59ebf799660864862fc1dbd6e6c8d68bd529399426811846e408d8b2fee4ab04fe5'; `
+    if ((Get-FileHash dotnet.zip -Algorithm sha512).Hash -ne $dotnet_sha512) { `
+        Write-Host 'CHECKSUM VERIFICATION FAILED!'; `
+        exit 1; `
+    }; `
+    `
+    Expand-Archive dotnet.zip -force -DestinationPath $Env:ProgramFiles\dotnet; `
+    Remove-Item -Force dotnet.zip
 
-# Install Chocolately
-ENV chocolateyUseWindowsCompression false
-RUN Invoke-WebRequest -Uri 'https://chocolatey.org/install.ps1' -OutFile ./choco-install.ps1 ; `
-    .\\choco-install.ps1 | Out-Null ; `
-    choco feature disable --name showDownloadProgress ; `
-    Remove-Item ".\choco-install.ps1"
+RUN setx /M PATH $($Env:PATH + ';' + $Env:ProgramFiles + '\dotnet')
 
-# Install Visual Studio Test Platform (vstest)
-RUN Register-PackageSource -Name MyNuGet -Location https://www.nuget.org/api/v2 -ProviderName NuGet | Out-Null ; `
-    Install-Package Microsoft.TestPlatform -Force | Out-Null ; `
-    setx vstest 'c:\Program Files\PackageManagement\NuGet\Packages\Microsoft.TestPlatform.16.2.0\tools\net451\Common7\IDE\Extensions\TestPlatform'
+#Download Azure DevOps agent
+WORKDIR c:/setup
+ADD https://vstsagentpackage.azureedge.net/agent/2.144.0/vsts-agent-win-x64-2.144.0.zip .
 
-# Install Visual Studio with dotNet workload
-RUN Invoke-WebRequest "https://aka.ms/vs/16/release/vs_community.exe" -OutFile ".\vs_community.exe" -UseBasicParsing ; `
-    Start-Process .\vs_community.exe -ArgumentList '--add Microsoft.VisualStudio.Workload.NetWeb --quiet --norestart' -Wait ; `
-    Remove-Item ".\vs_community.exe" ; `
-    setx visualstudio 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin'
-    # Update PATH environment variable
-RUN $machinePath = [environment]::GetEnvironmentVariable('path', [System.EnvironmentVariableTarget]::Machine) ; `
-    $newMachinePath = 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin;' + $machinePath ; `
-    [environment]::SetEnvironmentVariable('path', $newMachinePath, [System.EnvironmentVariableTarget]::Machine)
+COPY InstallAgent.ps1 .
+COPY ConfigureAgent.ps1 .
 
-# Install .NET Framework 4.6 Targeting Pack
-RUN Invoke-WebRequest "https://go.microsoft.com/fwlink/?linkid=2099469" -OutFile ".\ndp46-targetingpack-kb3045566.exe" -UseBasicParsing ; `
-    Start-Process .\ndp46-targetingpack-kb3045566.exe -ArgumentList '/quiet /norestart' -Wait ; `
-    Remove-Item ".\ndp46-targetingpack-kb3045566.exe"
+# Reset the shell.
+SHELL ["cmd", "/S", "/C"]
+RUN powershell -noexit "& "".\InstallAgent.ps1"""
 
-# Install Java runtime
-RUN Invoke-WebRequest -Uri "https://repos.azul.com/azure-only/zulu/packages/zulu-7/7u232/zulu-7-azure-jdk_7.31.0.5-7.0.232-win_x64.zip" -OutFile ".\azulJDK7.zip" -UseBasicParsing ; `
-    Invoke-WebRequest -Uri "https://repos.azul.com/azure-only/zulu/packages/zulu-8/8u222/zulu-8-azure-jdk_8.40.0.25-8.0.222-win_x64.zip" -OutFile ".\azulJDK8.zip" -UseBasicParsing ; `
-    Invoke-WebRequest -Uri "https://repos.azul.com/azure-only/zulu/packages/zulu-11/11.0.4/zulu-11-azure-jdk_11.33.15-11.0.4-win_x64.zip" -OutFile ".\azulJDK11.zip" -UseBasicParsing ; `
-    # Expand the zips
-    Expand-Archive -Path '.\azulJDK7.zip' -DestinationPath 'C:\Program Files\Java\' -Force ; `
-    Expand-Archive -Path '.\azulJDK8.zip' -DestinationPath 'C:\Program Files\Java\' -Force ; `
-    Expand-Archive -Path '.\azulJDK11.zip' -DestinationPath 'C:\Program Files\Java\' -Force ; `
-    # Deleting zip folders
-    Remove-Item ".\azulJDK7.zip" ; `
-    Remove-Item ".\azulJDK8.zip" ; `
-    Remove-Item ".\azulJDK11.zip" ; `
-    # Get Java Paths
-    $java7Installs =Get-ChildItem -Path 'C:\Program Files\Java' -Filter '*azure-jdk*7*' | Sort-Object -Property Name -Descending | Select-Object -First 1 ; `
-    $latestJava7Install = $java7Installs.FullName ; `
-    $java8Installs = Get-ChildItem -Path 'C:\Program Files\Java' -Filter '*azure-jdk*8*' | Sort-Object -Property Name -Descending | Select-Object -First 1 ; `
-    $latestJava8Install = $java8Installs.FullName ; `
-    $java11Installs = Get-ChildItem -Path 'C:\Program Files\Java' -Filter '*azure-jdk*11*' | Sort-Object -Property Name -Descending | Select-Object -First 1 ; `
-    $latestJava11Install = $java11Installs.FullName ; `
-    # Set Java environet variables
-    setx java $latestJava8Install | Out-Null ; `
-    setx JAVA_HOME $latestJava8Install | Out-Null ; `
-    setx JAVA_HOME_7_X64 $latestJava7Install | Out-Null ; `
-    setx JAVA_HOME_8_X64 $latestJava8Install | Out-Null ; `
-    setx JAVA_HOME_11_X64 $latestJava11Install | Out-Null 
-
-# Clean up temp directory
-RUN Remove-Item -Force -Recurse ${Env:TEMP}\*
-
-# Execute VSTS/DevOps Agent configuration on startup
-ENTRYPOINT [ "C:\\Windows\\system32\\cmd.exe", "/C", ".\\config.cmd --unattended --replace && .\\run.cmd" ]
+# Configure agent on startup 
+CMD powershell -noexit .\ConfigureAgent.ps1

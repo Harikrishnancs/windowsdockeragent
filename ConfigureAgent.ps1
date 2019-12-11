@@ -1,5 +1,5 @@
 $url = $env:https://dev.azure.com/U89663
-$token = $env:3gllqshrsqkypgj4thmid3aqjdmev4rqzfgeduxopqud7rokmc3a
+$token = $env:
 $pool = $env:Default
 $agentName = $env:dotnetagent
 

@@ -10,12 +10,12 @@ pool:
   vmImage: 'windows-latest'
 
 steps:
-- task: ArtifactoryDocker@1
-  inputs:
-    command: 'pull'
-    artifactoryService: 'Artifactory'
-    sourceRepo: 'docker'
-    imageName: 'ustpoc-docker.jfrog.io/microsoft/dotnet-framework:4.7.2-sdk-windowsservercore-ltsc2016'
+#- task: ArtifactoryDocker@1
+  #inputs:
+    #command: 'pull'
+    #artifactoryService: 'Artifactory'
+    #sourceRepo: 'docker'
+    #imageName: 'ustpoc-docker.jfrog.io/microsoft/dotnet-framework:4.7.2-sdk-windowsservercore-ltsc2016'
 - task: Docker@2
   inputs:
     repository: 'ustpoc-docker-local.jfrog.io/windowsdockeragent'
